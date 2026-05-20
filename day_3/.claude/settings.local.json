@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(PYTHONPATH=. python day_3/app/app.py)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from app.app import app; print\\(app\\)\")",
+      "Bash(cd /d/pythonFile/Deep learning)",
+      "Bash(curl:*)"
+    ]
+  }
+}
