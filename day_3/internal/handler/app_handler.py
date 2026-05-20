@@ -1,5 +1,6 @@
 import os
 import uuid
+import tiktoken
 from datetime import datetime
 from typing import Any, TypedDict, List
 
@@ -15,7 +16,7 @@ from pinecone import Pinecone
 from pydantic import Field, BaseModel
 
 from internal.handler.auth_handler import get_login_user_id
-from internal.model import ChatMessage, ChatSession
+from internal.model import ChatMessage, ChatSession, ChatSummary
 from internal.exception import FailException
 from internal.service import AppService, MessageService
 from injector import inject
@@ -51,6 +52,19 @@ class AppHandler:
         app = self.app_service.delete_app(id)
         return success_message(f"删除成功{app.id}")
 
+    def _count_tokens(self, text: str) -> int:
+        """使用tiktoken计算文本的token数量"""
+        try:
+            encoding = tiktoken.get_encoding("cl100k_base")
+            return len(encoding.encode(text))
+        except Exception:
+            # 降级方案：按字符估算
+            return len(text) // 4
+
+    def _compress_context_if_needed(self, session_id: uuid.UUID, model_max_tokens: int = 8000):
+        """检查并压缩上下文"""
+        return self.message_service.check_and_compress_context(session_id, model_max_tokens)
+
     def completion(self, app_id: uuid.UUID = None, session_id: uuid.UUID = None):
         session_id = session_id or app_id
         payload = request.get_json(silent=True) or {}
@@ -61,6 +75,7 @@ class AppHandler:
         retrieval_top_k = int(settings.get("retrieval_top_k", 3))
         namespace = settings.get("namespace") or "ReID"
         enable_web_search = bool(settings.get("enable_web_search", True))
+        model_max_tokens = int(settings.get("max_tokens", 8000))
         if not question:
             return {"code": "validateError", "message": "用户输入不能为空", "data": {}}, 200
         if len(question) > 500:
@@ -195,14 +210,28 @@ class AppHandler:
                 return "generate"
 
         def load_history(state: GraphState) -> Any:
-
-            """加载历史消息"""
             messages = []
             session_id = state["session_id"]
             question = state["question"]
 
             print("---加载历史消息---")
 
+            # 先检查是否需要压缩上下文
+            self._compress_context_if_needed(session_id, model_max_tokens)
+
+            # 获取总结
+            summary_obj = (
+                db.session.query(ChatSummary)
+                .filter(ChatSummary.session_id == session_id)
+                .first()
+            )
+
+            # 如果有总结，添加到消息开头
+            if summary_obj and summary_obj.summary:
+                messages.append(HumanMessage(content=f"以下是之前对话的总结：\n{summary_obj.summary}"))
+                messages.append(AIMessage(content="好的，我已了解之前的对话内容。"))
+
+            # 获取最近的消息
             rows = (
                 db.session.query(ChatMessage)
                 .filter(ChatMessage.session_id == session_id)
@@ -222,7 +251,7 @@ class AppHandler:
         def save_message(state: GraphState) -> Any:
 
             """将每一轮的对话进行保存"""
-            # 将state["messages"]中最新的两条消息保存到chat_message表中，包含session_id、role、content等字段，
+            # 将state["messages"]中最新的两条消息保存到chat_message表中
             session_id = state["session_id"]
             messages = state["messages"]
             question = state["question"]
@@ -233,7 +262,8 @@ class AppHandler:
                 role = "assistant"
                 if isinstance(msg, HumanMessage):
                     role = "user"
-                token_count = len(msg.content.split())
+                # 使用tiktoken计算token数量
+                token_count = self._count_tokens(msg.content)
                 new_message = ChatMessage(
                     session_id=session_id,
                     role=role,
@@ -247,6 +277,10 @@ class AppHandler:
                 if not chat_session.title or chat_session.title == "新的论文研究会话":
                     chat_session.title = question[:30]
             db.session.commit()
+
+            # 保存消息后再次检查是否需要压缩
+            self._compress_context_if_needed(session_id, model_max_tokens)
+
             return state
 
         workflow = StateGraph(GraphState)

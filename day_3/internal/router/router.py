@@ -43,6 +43,8 @@ class Router:
       bp.add_url_rule('/message/<uuid:id>', endpoint='legacy_message_get_session', view_func=self.message_handle.get_session, methods=["GET"])
       bp.add_url_rule('/message/summary/<uuid:id>', endpoint='legacy_message_get_summary', view_func=self.message_handle.get_summary, methods=["GET"])
       bp.add_url_rule('/message/summary/<uuid:id>', endpoint='legacy_message_update_summary', view_func=self.message_handle.update_summary, methods=["POST"])
+      bp.add_url_rule('/message/context/<uuid:id>', endpoint='legacy_message_get_context', view_func=self.message_handle.get_context, methods=["GET"])
+      bp.add_url_rule('/message/compress/<uuid:id>', endpoint='legacy_message_compress_context', view_func=self.message_handle.compress_context, methods=["POST"])
       bp.add_url_rule('/message/add/<uuid:id>', endpoint='legacy_message_get_messages', view_func=self.message_handle.get_messages, methods=["GET"])
       bp.add_url_rule('/message/add/<uuid:id>', endpoint='legacy_message_add_message', view_func=self.message_handle.add_message, methods=["POST"])
 
